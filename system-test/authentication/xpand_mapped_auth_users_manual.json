@@ -25,6 +25,19 @@
             "host": "%",
             "plugin": "pam",
             "authentication_string": "passwd"
+        },
+        {
+            "user": "db-test",
+            "host": "%",
+            "password": "*46FE72D4E009EFEA242082EE077438025AE62F8E",
+            "plugin": "mysql_native_password"
+        }
+    ],
+    "db": [
+        {
+            "user": "db-test",
+            "host": "%",
+            "db": "test"
         }
     ]
 }
