@@ -27,15 +27,15 @@
             "authentication_string": "passwd"
         },
         {
-            "user": "db-test",
+            "user": "db-user",
             "host": "%",
-            "password": "*46FE72D4E009EFEA242082EE077438025AE62F8E",
+            "password": "*C31AF46A895F6F179A04296C86A024CF9AB84147",
             "plugin": "mysql_native_password"
         }
     ],
     "db": [
         {
-            "user": "db-test",
+            "user": "db-user",
             "host": "%",
             "db": "test"
         }
