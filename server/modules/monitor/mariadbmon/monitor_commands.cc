@@ -1632,7 +1632,21 @@ bool BackupOperation::test_datalink()
     {
         string test_receive_cmd = mxb::string_printf("socat -u TCP:%s:%i,connect-timeout=%i STDOUT",
                                                      m_source_host.c_str(), m_source_port, socat_timeout_s);
-        auto res = ssh_util::run_cmd(*m_target_ses, test_receive_cmd, m_ssh_timeout);
+        ssh_util::CmdResult res;
+        for (int i = 0; i < 5; i++)
+        {
+            res = ssh_util::run_cmd(*m_target_ses, test_receive_cmd, m_ssh_timeout);
+            if (res.type != RType::OK || res.rc == 0)
+            {
+                break;
+            }
+            else
+            {
+                MXB_ERROR("Test datalink failed. Iter %i, type %i, rc %i: %s", i, (int)res.type, res.rc,
+                          res.output.c_str());
+            }
+        }
+
         if (res.type == RType::OK && res.rc == 0)
         {
             mxb::trim(res.output);
