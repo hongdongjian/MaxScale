@@ -79,23 +79,13 @@ static struct THIS_UNIT
 #else
     static constexpr uint32_t poll_events = EPOLLIN | EPOLLOUT | EPOLLHUP | EPOLLET;
 #endif
+    std::atomic_size_t base_read_buffer_size = DCB::DEFAULT_BASE_READ_BUFFER_SIZE;
 } this_unit;
 
 static thread_local struct
 {
     DCB* current_dcb;       /** The DCB currently being handled by event handlers. */
 } this_thread;
-
-/*
- * Unclear which is the optimal read buffer size. LibUV uses 64 kB, so try that here too. This
- * requires 6 GB of memory with 100k GWBUFs in flight. We want to minimize the number of small
- * reads, as even a zero-size read takes 2-3 us. 30 kB read seems to take ~30 us. With larger
- * reads the time increases somewhat linearly, although fluctuations are significant.
- *
- * TODO: Think how this will affect long-term stored GWBUFs (e.g. session commands). They will now
- * consume much more memory.
- */
-const size_t BASE_READ_BUFFER_SIZE = 64 * 1024;
 
 void set_SSL_mode_bits(SSL* ssl)
 {
@@ -214,6 +204,19 @@ DCB::~DCB()
     if (m_encryption.handle)
     {
         SSL_free(m_encryption.handle);
+    }
+}
+
+//static
+void DCB::set_base_read_buffer_size(size_t new_size)
+{
+    size_t old_size = this_unit.base_read_buffer_size.load(std::memory_order_relaxed);
+
+    if (new_size != old_size)
+    {
+        this_unit.base_read_buffer_size.store(new_size, std::memory_order_relaxed);
+
+        MXB_NOTICE("DCB read buffer size set to %d bytes, was %d bytes.", (int)new_size, (int)old_size);
     }
 }
 
@@ -425,10 +428,43 @@ bool DCB::socket_read(size_t maxbytes, ReadLimit limit_type)
 
     while (keep_reading)
     {
-        auto [ptr, read_limit] = strict_limit ? calc_read_limit_strict(maxbytes) :
-            m_readq.prepare_to_write(BASE_READ_BUFFER_SIZE);
+        uint8_t* ptr;
+        size_t read_limit;
 
-        auto ret = ::read(m_fd, ptr, read_limit);
+        if (strict_limit)
+        {
+            std::tie(ptr, read_limit) = calc_read_limit_strict(maxbytes);
+        }
+        else
+        {
+            read_limit = get_read_buffer_size();
+
+            if (read_limit == 0)
+            {
+                // Apparently 'base_read_buffer_size' is 0, and there
+                // is nothing available in the socket.
+                ptr = nullptr;
+            }
+            else
+            {
+                std::tie(ptr, read_limit) = m_readq.prepare_to_write(read_limit);
+            }
+        }
+
+        ssize_t ret;
+
+        if (read_limit != 0)
+        {
+            ret = ::read(m_fd, ptr, read_limit);
+        }
+        else
+        {
+            // We know the socket is empty and consequently, we do not need to call
+            // read(), which would return -1 with errno set to EAGAIN or EWOULDBLOCK.
+            // With 'ret' set to 0, the end effect will be identical.
+            ret = 0;
+        }
+
         m_stats.n_reads++;
         if (ret > 0)
         {
@@ -534,8 +570,9 @@ bool DCB::socket_read_SSL(size_t maxbytes)
         // less space is enough as OpenSSL cannot fill the entire buffer at once anyway. This saves on
         // reallocations when reading multiple 16 kB blocks in succession. GWBUF will still
         // double its size when it needs to reallocate.
-        auto [ptr, alloc_limit] = (bytes_from_socket == 0) ? m_readq.prepare_to_write(BASE_READ_BUFFER_SIZE) :
-            m_readq.prepare_to_write(openssl_read_limit);
+        auto [ptr, alloc_limit] = (bytes_from_socket == 0)
+            ? m_readq.prepare_to_write(get_read_buffer_size())
+            : m_readq.prepare_to_write(openssl_read_limit);
 
         // In theory, the readq could be larger than INT_MAX bytes.
         int read_limit = std::min(alloc_limit, (size_t)INT_MAX);
@@ -1033,6 +1070,34 @@ std::tuple<uint8_t*, size_t> DCB::calc_read_limit_strict(size_t maxbytes)
     auto max_read_limit = maxbytes - m_readq.length();
     auto [ptr, _1] = m_readq.prepare_to_write(max_read_limit);
     return {ptr, max_read_limit};
+}
+
+size_t DCB::get_read_buffer_size() const
+{
+    size_t size = this_unit.base_read_buffer_size.load(std::memory_order_relaxed);
+
+    if (size == 0)
+    {
+        int s = socket_bytes_readable();
+
+        if (s == -1)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            {
+                size = 0;
+            }
+            else
+            {
+                size = DEFAULT_BASE_READ_BUFFER_SIZE;
+            }
+        }
+        else
+        {
+            size = s;
+        }
+    }
+
+    return size;
 }
 
 bool DCB::add_callback(Reason reason,

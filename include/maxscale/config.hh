@@ -277,6 +277,7 @@ public:
     config::Count         rebalance_window;         /**< How many seconds should be taken into account. */
     config::Bool          skip_name_resolve;        /**< Reverse DNS lookups */
     mxs::KeyManager::Type key_manager;
+    config::Size          base_read_buffer_size;    /**< Initial size of buffer when reading from socket */
 
     // NON-modifiable automatically configured parameters.
     ParamAutoTune::value_type auto_tune;        /**< Vector of parameter names. */
@@ -425,5 +426,6 @@ private:
     static config::ParamString                          s_debug;
     static config::ParamSize                            s_max_read_amount;
     static ParamKeyManager                              s_key_manager;
+    static config::ParamSize                            s_base_read_buffer_size;
 };
 }

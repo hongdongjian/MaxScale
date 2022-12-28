@@ -89,6 +89,7 @@ constexpr char CN_ADMIN_SSL_KEY[] = "admin_ssl_key";
 constexpr char CN_ADMIN_SSL_VERSION[] = "admin_ssl_version";
 constexpr char CN_AUTO[] = "auto";
 constexpr char CN_AUTO_TUNE[] = "auto_tune";
+constexpr char CN_BASE_READ_BUFFER_SIZE[] = "base_read_buffer_size";
 constexpr char CN_DEBUG[] = "debug";
 constexpr char CN_DUMP_LAST_STATEMENTS[] = "dump_last_statements";
 constexpr char CN_LOAD_PERSISTED_CONFIGS[] = "load_persisted_configs";
@@ -721,6 +722,15 @@ Config::ParamKeyManager Config::s_key_manager(
     mxs::KeyManager::Type::NONE,
     config::Param::AT_RUNTIME
     );
+
+config::ParamSize Config::s_base_read_buffer_size(
+    &Config::s_specification,
+    CN_BASE_READ_BUFFER_SIZE,
+    "Base buffer size when reading from socket.",
+    DCB::DEFAULT_BASE_READ_BUFFER_SIZE,                         // default
+    0,                                                          // min
+    std::numeric_limits<config::ParamCount::value_type>::max(), // max
+    config::Param::Modifiable::AT_RUNTIME);
 }
 
 namespace
@@ -870,6 +880,9 @@ Config::Config(int argc, char** argv)
 }),
     rebalance_window(this, &s_rebalance_window),
     skip_name_resolve(this, &s_skip_name_resolve),
+    base_read_buffer_size(this, &s_base_read_buffer_size, [](int64_t size) {
+            DCB::set_base_read_buffer_size(size);
+        }),
     config_check(false),
     log_target(MXB_LOG_TARGET_DEFAULT),
     substitute_variables(false),
@@ -1158,6 +1171,8 @@ bool Config::post_configure(const std::map<std::string, mxs::ConfigParameters>& 
     // leading to problems related to initialization order
     // in the constructor, across translation units and threads.
     this->qc_cache_properties.max_size = this->qc_cache_max_size.get();
+
+    DCB::set_base_read_buffer_size(this->base_read_buffer_size.get());
 
     return rv;
 }

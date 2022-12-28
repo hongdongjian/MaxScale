@@ -52,6 +52,17 @@ class SSLContext;
 class DCB : public mxb::Pollable
 {
 public:
+    /*
+     * Unclear which is the optimal read buffer size. LibUV uses 64 kB, so try that here too. This
+     * requires 6 GB of memory with 100k GWBUFs in flight. We want to minimize the number of small
+     * reads, as even a zero-size read takes 2-3 us. 30 kB read seems to take ~30 us. With larger
+     * reads the time increases somewhat linearly, although fluctuations are significant.
+     *
+     * TODO: Think how this will affect long-term stored GWBUFs (e.g. session commands). They will now
+     * consume much more memory.
+     */
+    static const size_t DEFAULT_BASE_READ_BUFFER_SIZE = 64 * 1024;
+
     static const int FD_CLOSED = -1;
 
     using Handler = DCBHandler;
@@ -118,6 +129,13 @@ public:
         ESTABLISHED,        /*< The SSL connection is in use */
         HANDSHAKE_FAILED    /*< The SSL handshake failed */
     };
+
+    /**
+     * Set initial buffer size when reading from socket.
+     *
+     * @param size  The size.
+     */
+    static void set_base_read_buffer_size(size_t size);
 
     /**
      * @return The unique identifier of the DCB.
@@ -675,6 +693,8 @@ private:
     void socket_write();
 
     std::tuple<uint8_t*, size_t> calc_read_limit_strict(size_t maxbytes);
+
+    size_t get_read_buffer_size() const;
 
     std::tuple<bool, GWBUF> read_impl(size_t minbytes, size_t maxbytes, ReadLimit limit_type);
 
