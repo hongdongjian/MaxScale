@@ -433,6 +433,9 @@ public:
 
     ConnectionPoolStats pool_stats(const SERVER* pSrv);
 
+    GWBUF get_buffer_from_pool();
+    void return_buffer_to_pool(GWBUF&& buffer);
+
     /**
      * Register a function to be called every epoll_tick.
      */
@@ -632,6 +635,9 @@ private:
     long       m_next_timeout_check {0};
 
     std::vector<std::function<void()>> m_epoll_tick_funcs;
+
+    /**< A work buffer for reading network data. Reduces the number of small allocations */
+    GWBUF m_work_buffer;
 };
 }
 

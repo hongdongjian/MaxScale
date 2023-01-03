@@ -1929,6 +1929,24 @@ bool RoutingWorker::conn_to_server_needed(const SERVER* srv) const
     return m_eps_waiting_for_conn.find(srv) != m_eps_waiting_for_conn.end();
 }
 
+GWBUF RoutingWorker::get_buffer_from_pool()
+{
+    return std::move(m_work_buffer);
+}
+
+void RoutingWorker::return_buffer_to_pool(GWBUF&& buffer)
+{
+    mxb_assert(buffer.empty() && buffer.is_unique());
+    // The "pool" is just a single buffer. The assumption is that the rworker typically has just one
+    // gwbuf in flight. This does not apply if multiple clients/servers are sending large packets which
+    // cannot be read in one go. Increase the pool size later if deemed necessary.
+    size_t new_cap = buffer.capacity();
+    if (new_cap > 0 && new_cap > m_work_buffer.capacity() && new_cap <= 1048576)
+    {
+        m_work_buffer = std::move(buffer);
+    }
+}
+
 void RoutingWorker::ConnectionPoolStats::add(const ConnectionPoolStats& rhs)
 {
     curr_size += rhs.curr_size;
