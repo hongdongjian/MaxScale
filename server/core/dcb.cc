@@ -287,6 +287,13 @@ std::tuple<bool, GWBUF> DCB::read_impl(size_t minbytes, size_t maxbytes, ReadLim
     bool read_success = false;
     bool trigger_again = false;
 
+    if (m_readq.empty() && m_readq.capacity() == 0)
+    {
+        // Recycle a buffer used for a recent write.
+        m_readq = static_cast<mxs::RoutingWorker*>(m_owner)->get_buffer_from_pool();
+        mxb_assert(m_readq.empty());
+    }
+
     if (maxbytes > 0 && m_readq.length() >= maxbytes)
     {
         // Already have enough data. May have more (either in readq or in socket), so read again later.
@@ -311,13 +318,19 @@ std::tuple<bool, GWBUF> DCB::read_impl(size_t minbytes, size_t maxbytes, ReadLim
         }
     }
 
+    // Read is complete. If nothing was read, release the allocated space.
+    const auto readq_len = m_readq.length();
+    if (readq_len == 0 && m_readq.is_unique())
+    {
+        static_cast<mxs::RoutingWorker*>(m_owner)->return_buffer_to_pool(std::move(m_readq));
+    }
+
     GWBUF rval_buf;
     bool rval_ok = false;
 
     if (read_success)
     {
         rval_ok = true;
-        auto readq_len = m_readq.length();
 
         MXB_DEBUG("Read %lu bytes from dcb %p (%s) in state %s fd %d.",
                   readq_len, this, whoami().c_str(), mxs::to_string(m_state), m_fd);
@@ -527,6 +540,11 @@ bool DCB::socket_read_SSL(size_t maxbytes)
     // OpenSSL has an internal buffer limit of 16 kB (16384), and will never return more data in a single
     // read.
     const uint64_t openssl_read_limit = 16 * 1024;
+
+    if (m_readq.empty() && m_readq.capacity() == 0)
+    {
+        m_readq = static_cast<mxs::RoutingWorker*>(m_owner)->get_buffer_from_pool();
+    }
 
     while (keep_reading)
     {
@@ -796,22 +814,13 @@ void DCB::writeq_drain()
     if (m_writeq.empty())
     {
         /**
-         * Writeq has been completely consumed. Take some simple steps to recycle buffers.
-         *  Don't try to recycle if:
-         *  1. Underlying data is shared or null. Let the last owner recycle it.
-         *  2. The allocated buffer is large. The large buffer limit is subject to discussion. This limit
-         *  is required to avoid keeping large amounts of memory tied to one GWBUF.
-         *
-         *  If writeq is suitable, readq is empty and has less capacity than writeq, recycle writeq.
+         *  m_writeq has been completely consumed. If the gwbuf is unique, give it back to the RoutingWorker.
+         *  The RoutingWorker may store the buffer for recycling.
          */
-
-        // TODO: Add smarter way to estimate required readq capacity. E.g. average packet size.
-        auto writeq_cap = m_writeq.capacity();
-        if (m_writeq.is_unique() && writeq_cap > 0 && writeq_cap < 1048576
-            && m_readq.empty() && m_readq.capacity() < writeq_cap)
+        if (m_writeq.is_unique())
         {
             m_writeq.reset();
-            m_readq = move(m_writeq);
+            static_cast<mxs::RoutingWorker*>(m_owner)->return_buffer_to_pool(std::move(m_writeq));
         }
         else
         {

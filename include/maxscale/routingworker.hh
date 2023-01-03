@@ -539,6 +539,9 @@ public:
 
     ConnectionPoolStats pool_stats(const SERVER* pSrv);
 
+    GWBUF get_buffer_from_pool();
+    void return_buffer_to_pool(GWBUF&& buffer);
+
     /**
      * Register a function to be called every epoll_tick.
      */
@@ -833,6 +836,9 @@ private:
     DCId               m_activate_eps_dcid {0};
     DCId               m_timeout_eps_dcid {0};
     mxb::AverageN      m_average_load;
+
+    /**< A work buffer for reading network data. Reduces the number of small allocations */
+    GWBUF m_work_buffer;
 };
 
 const char* to_string(RoutingWorker::State state);
