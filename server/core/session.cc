@@ -259,16 +259,26 @@ size_t Session::varying_size() const
     return total;
 }
 
-size_t Session::get_memory_statistics(size_t* connection_buffers_size,
+size_t Session::get_memory_statistics(size_t* client_dcb_size, size_t* be_dcbs_size,
                                       size_t* last_queries_size,
                                       size_t* variables_size) const
 {
-    size_t connection_buffers = 0;
     mxb_assert(m_client_conn);
-    connection_buffers += m_client_conn->sizeof_buffers();
+    size_t client_dcb = m_client_conn->sizeof_buffers();
+    if (client_dcb_size)
+    {
+        *client_dcb_size = client_dcb;
+    }
+
+    size_t be_dcbs = 0;
     for (const auto* conn : m_backends_conns)
     {
-        connection_buffers += conn->sizeof_buffers();
+        be_dcbs += conn->sizeof_buffers();
+    }
+
+    if (be_dcbs_size)
+    {
+        *be_dcbs_size = be_dcbs;
     }
 
     size_t last_queries = 0;
@@ -284,11 +294,6 @@ size_t Session::get_memory_statistics(size_t* connection_buffers_size,
         variables += kv.first.capacity();
     }
 
-    if (connection_buffers_size)
-    {
-        *connection_buffers_size = connection_buffers;
-    }
-
     if (last_queries_size)
     {
         *last_queries_size = last_queries;
@@ -299,7 +304,7 @@ size_t Session::get_memory_statistics(size_t* connection_buffers_size,
         *variables_size = variables;
     }
 
-    return connection_buffers + last_queries + variables;
+    return client_dcb + be_dcbs + last_queries + variables;
 }
 
 void Session::deliver_response()

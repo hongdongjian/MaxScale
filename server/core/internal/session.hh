@@ -311,7 +311,7 @@ protected:
     std::unique_ptr<mxs::Endpoint> m_down;
 
 private:
-    size_t get_memory_statistics(size_t* connection_buffers,
+    size_t get_memory_statistics(size_t* client_dcb_size, size_t* be_dcbs_size,
                                  size_t* last_queries,
                                  size_t* variables) const;
 
