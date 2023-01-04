@@ -732,6 +732,14 @@ bool DCB::writeq_append(GWBUF&& data)
             call_callback(Reason::HIGH_WATER);
             m_high_water_reached = true;
             m_stats.n_high_water++;
+
+            auto overshoot = m_writeq.length() - m_high_water;
+            if (overshoot > 50 * 1024)
+            {
+                auto role = (m_role == Role::CLIENT) ? "client" : "be";
+                MXB_ERROR("High water reached with %s dcb %zu. Overshoot %lu. Length %lu, cap %lu",
+                          role, m_uid, overshoot, m_writeq.length(), m_writeq.capacity());
+            }
         }
         rval = true;
     }
