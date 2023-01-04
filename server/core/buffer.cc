@@ -28,6 +28,8 @@ using std::move;
 
 namespace
 {
+std::atomic_int split_reallocs {0};
+
 std::string extract_sql_real(const GWBUF* pBuf)
 {
     mxb_assert(pBuf != nullptr);
@@ -292,6 +294,18 @@ GWBUF GWBUF::split(uint64_t n_bytes)
 
         consume(n_bytes);
         rval.rtrim(len - n_bytes);
+
+        // Check that *this* does not have a lot of wasted space. Reallocate if so.
+        auto wasted = capacity() - length();
+        if (wasted > 3 * 1024 && wasted > 0.5 * capacity())
+        {
+            ensure_unique();
+            auto allocs = split_reallocs++;
+            if (allocs % 1000 == 0)
+            {
+                MXB_ERROR("%i split reallocs.", allocs);
+            }
+        }
     }
     return rval;
 }
