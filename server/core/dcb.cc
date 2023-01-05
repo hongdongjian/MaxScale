@@ -426,7 +426,7 @@ bool DCB::socket_read(size_t maxbytes, ReadLimit limit_type)
     while (keep_reading)
     {
         auto [ptr, read_limit] = strict_limit ? calc_read_limit_strict(maxbytes) :
-            m_readq.prepare_to_write(std::min(BASE_READ_BUFFER_SIZE, maxbytes));
+            m_readq.prepare_to_write(BASE_READ_BUFFER_SIZE);
 
         auto ret = ::read(m_fd, ptr, read_limit);
         m_stats.n_reads++;
@@ -739,14 +739,11 @@ bool DCB::writeq_append(GWBUF&& data)
             m_high_water_reached = true;
             m_stats.n_high_water++;
 
+            auto role = (m_role == Role::CLIENT) ? "client" : "be";
             auto overshoot = m_writeq.length() - m_high_water;
-            if (overshoot > 50 * 1024)
-            {
-                auto role = (m_role == Role::CLIENT) ? "client" : "be";
                 MXB_ERROR("High water reached with %s dcb %zu. Overshoot %lu. Length before %lu, "
                           "length after %lu, cap %lu",
                           role, m_uid, overshoot, len_before_write, m_writeq.length(), m_writeq.capacity());
-            }
         }
 
 
