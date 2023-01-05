@@ -688,7 +688,43 @@ bool MariaDBBackendConnection::handle_auth_change_response(const GWBUF& reply, D
  */
 void MariaDBBackendConnection::normal_read()
 {
-    auto [read_ok, buffer] = m_dcb->read(MYSQL_HEADER_LEN, 0);
+    // Limit the amount of data read by the writeq length limit. This avoids heavily overshooting the
+    // high water limit when server is returning large amounts of data.
+    auto high_water_limit = config_writeq_high_water() + 1;
+
+    const int MAX_PACKET_SIZE = MYSQL_PACKET_LENGTH_MAX + MYSQL_HEADER_LEN;
+
+    size_t bytes_to_read = high_water_limit;
+    auto client_writeq_len = m_session->client_dcb->writeq_len();
+    if (client_writeq_len < bytes_to_read)
+    {
+        bytes_to_read -= client_writeq_len;
+    }
+    else
+    {
+        // Should not really read anything. But logic may not handle that right now so read at least a little.
+        bytes_to_read = 100;
+    }
+
+    uint8_t header_data[MYSQL_HEADER_LEN];
+    // Existing packet can override the limit.
+    if (m_dcb->readq_peek(MYSQL_HEADER_LEN, header_data) == MYSQL_HEADER_LEN)
+    {
+        auto curr_packet_len = mariadb::get_packet_length(header_data);
+        bytes_to_read = (curr_packet_len > high_water_limit) ? curr_packet_len : high_water_limit;
+    }
+
+    if (bytes_to_read > MAX_PACKET_SIZE)
+    {
+        bytes_to_read = MAX_PACKET_SIZE;
+        MXB_ERROR("Outoa!");
+    }
+    else if (bytes_to_read < MYSQL_HEADER_LEN)
+    {
+        bytes_to_read = MYSQL_HEADER_LEN;
+    }
+
+    auto [read_ok, buffer] = m_dcb->read(MYSQL_HEADER_LEN, bytes_to_read);
 
     if (buffer.empty())
     {
@@ -745,6 +781,10 @@ void MariaDBBackendConnection::normal_read()
         }
 
         read_buffer = tmp;
+    }
+    else
+    {
+        abort(); // Not supported right now.
     }
 
     if (rcap_type_required(capabilities, RCAP_TYPE_RESULTSET_OUTPUT) || m_collect_result)

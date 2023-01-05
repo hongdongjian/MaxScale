@@ -426,7 +426,7 @@ bool DCB::socket_read(size_t maxbytes, ReadLimit limit_type)
     while (keep_reading)
     {
         auto [ptr, read_limit] = strict_limit ? calc_read_limit_strict(maxbytes) :
-            m_readq.prepare_to_write(BASE_READ_BUFFER_SIZE);
+            m_readq.prepare_to_write(std::min(BASE_READ_BUFFER_SIZE, maxbytes));
 
         auto ret = ::read(m_fd, ptr, read_limit);
         m_stats.n_reads++;
@@ -499,6 +499,11 @@ bool DCB::socket_read(size_t maxbytes, ReadLimit limit_type)
         m_incomplete_read = true;
     }
 
+    if (m_readq.capacity() > 700000)
+    {
+        MXB_ERROR("Big readq of dcb %lu. Len %lu, cap %lu. Latest read %lu, limit %lu.", m_uid,
+                  m_readq.length(), m_readq.capacity(), bytes_from_socket,  maxbytes);
+    }
     return success;
 }
 
@@ -722,6 +727,7 @@ bool DCB::writeq_append(GWBUF&& data)
     m_writeq.merge_back(move(data));
     bool rval = false;
 
+    auto len_before_write = m_writeq.length();
     if (write_parameter_check())
     {
         m_stats.n_buffered++;
@@ -737,12 +743,20 @@ bool DCB::writeq_append(GWBUF&& data)
             if (overshoot > 50 * 1024)
             {
                 auto role = (m_role == Role::CLIENT) ? "client" : "be";
-                MXB_ERROR("High water reached with %s dcb %zu. Overshoot %lu. Length %lu, cap %lu",
-                          role, m_uid, overshoot, m_writeq.length(), m_writeq.capacity());
+                MXB_ERROR("High water reached with %s dcb %zu. Overshoot %lu. Length before %lu, "
+                          "length after %lu, cap %lu",
+                          role, m_uid, overshoot, len_before_write, m_writeq.length(), m_writeq.capacity());
             }
         }
+
+
         rval = true;
     }
+    else
+    {
+        MXB_ERROR("Write parameter check fail");
+    }
+
     return rval;
 }
 
@@ -815,7 +829,7 @@ void DCB::writeq_drain()
 
         // TODO: Add smarter way to estimate required readq capacity. E.g. average packet size.
         auto writeq_cap = m_writeq.capacity();
-        if (m_writeq.is_unique() && writeq_cap > 0 && writeq_cap < 1048576
+        if (m_writeq.is_unique() && writeq_cap > 0 && writeq_cap <= BASE_READ_BUFFER_SIZE
             && m_readq.empty() && m_readq.capacity() < writeq_cap)
         {
             m_writeq.reset();
