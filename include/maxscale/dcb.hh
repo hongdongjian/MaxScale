@@ -138,6 +138,13 @@ public:
     static void set_base_read_buffer_size(size_t size);
 
     /**
+     * Set the size of the initial fast read
+     *
+     * @param size The size of the read. If 0 (default), no fast reads are done.
+     */
+    static void set_fast_read_size(size_t size);
+
+    /**
      * @return The unique identifier of the DCB.
      */
     uint64_t uid() const
@@ -694,7 +701,7 @@ private:
 
     std::tuple<uint8_t*, size_t> calc_read_limit_strict(size_t maxbytes);
 
-    size_t get_read_buffer_size() const;
+    size_t get_read_buffer_size(size_t bytes_read) const;
 
     std::tuple<bool, GWBUF> read_impl(size_t minbytes, size_t maxbytes, ReadLimit limit_type);
 

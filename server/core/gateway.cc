@@ -194,6 +194,20 @@ static void finish_base_libraries();
 static bool redirect_stdout_and_stderr(const std::string& path);
 static bool is_maxscale_already_running();
 
+static void fast_read_size(const char* arg)
+{
+    uint64_t sz;
+
+    if (get_suffixed_size(arg, &sz))
+    {
+        DCB::set_fast_read_size(sz);
+    }
+    else
+    {
+        printf("Ignoring invalid value for fast_read_size: %s\n", arg);
+    }
+}
+
 namespace
 {
 
@@ -282,6 +296,9 @@ const DEBUG_ARGUMENT debug_arguments[] =
     },
     {
         "gdb-stacktrace", use_gdb, "Use GDB to generate stacktraces"
+    },
+    {
+        "fast-read-size", fast_read_size, "Set fast read size"
     },
     {NULL, NULL, NULL}
 };

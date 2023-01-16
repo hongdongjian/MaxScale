@@ -80,6 +80,7 @@ static struct THIS_UNIT
     static constexpr uint32_t poll_events = EPOLLIN | EPOLLOUT | EPOLLHUP | EPOLLET;
 #endif
     std::atomic_size_t base_read_buffer_size = DCB::DEFAULT_BASE_READ_BUFFER_SIZE;
+    size_t             fast_read_size = 0;
 } this_unit;
 
 static thread_local struct
@@ -218,6 +219,12 @@ void DCB::set_base_read_buffer_size(size_t new_size)
 
         MXB_NOTICE("DCB read buffer size set to %d bytes, was %d bytes.", (int)new_size, (int)old_size);
     }
+}
+
+// static
+void DCB::set_fast_read_size(size_t new_size)
+{
+    this_unit.fast_read_size = new_size;
 }
 
 void DCB::clear()
@@ -437,7 +444,7 @@ bool DCB::socket_read(size_t maxbytes, ReadLimit limit_type)
         }
         else
         {
-            read_limit = get_read_buffer_size();
+            read_limit = get_read_buffer_size(bytes_from_socket);
 
             if (read_limit == 0)
             {
@@ -570,9 +577,9 @@ bool DCB::socket_read_SSL(size_t maxbytes)
         // less space is enough as OpenSSL cannot fill the entire buffer at once anyway. This saves on
         // reallocations when reading multiple 16 kB blocks in succession. GWBUF will still
         // double its size when it needs to reallocate.
-        auto [ptr, alloc_limit] = (bytes_from_socket == 0)
-            ? m_readq.prepare_to_write(get_read_buffer_size())
-            : m_readq.prepare_to_write(openssl_read_limit);
+        auto [ptr, alloc_limit] = (bytes_from_socket == 0) ?
+            m_readq.prepare_to_write(get_read_buffer_size(bytes_from_socket)) :
+            m_readq.prepare_to_write(openssl_read_limit);
 
         // In theory, the readq could be larger than INT_MAX bytes.
         int read_limit = std::min(alloc_limit, (size_t)INT_MAX);
@@ -1072,8 +1079,13 @@ std::tuple<uint8_t*, size_t> DCB::calc_read_limit_strict(size_t maxbytes)
     return {ptr, max_read_limit};
 }
 
-size_t DCB::get_read_buffer_size() const
+size_t DCB::get_read_buffer_size(size_t bytes_read) const
 {
+    if (bytes_read == 0 && this_unit.fast_read_size > 0)
+    {
+        return this_unit.fast_read_size;
+    }
+
     size_t size = this_unit.base_read_buffer_size.load(std::memory_order_relaxed);
 
     if (size == 0)
