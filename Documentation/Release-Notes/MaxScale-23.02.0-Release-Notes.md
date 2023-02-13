@@ -41,6 +41,10 @@ for more information.
 
 ### [MXS-3262](https://jira.mariadb.org/browse/MXS-3262) Add create-backup and restore-from-backup commands to MariaDB-Monitor
 
+These commands backup and restore database contents to an external drive. See
+[monitor documentation](../Monitors/MariaDB-Monitor.md#backup-operations) for
+more information.
+
 ### [MXS-3269](https://jira.mariadb.org/browse/MXS-3260) Make it possible to change at runtime the number of threads used by MaxScale
 
 It is now possible to change at runtime the number of threads MaxScale
