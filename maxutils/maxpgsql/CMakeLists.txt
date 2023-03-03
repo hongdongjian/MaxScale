@@ -1,0 +1,10 @@
+include(FindPostgreSQL)
+
+if (PostgreSQL_FOUND)
+  message(STATUS "Using PostgreSQL version ${PostgreSQL_VERSION_STRING}")
+  include_directories(include)
+  add_subdirectory(include/maxpgsql)
+  add_subdirectory(src)
+else()
+  message(FATAL_ERROR "PostgreSQL client library not found")
+endif()
