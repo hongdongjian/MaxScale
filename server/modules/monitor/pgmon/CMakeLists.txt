@@ -1,0 +1,4 @@
+add_library(pgmon SHARED pgmonitor.cc pgserver.cc)
+target_link_libraries(pgmon maxscale-common maxpgsql)
+set_target_properties(pgmon PROPERTIES VERSION "1.0.0" LINK_FLAGS -Wl,-z,defs)
+install_module(pgmon core)
