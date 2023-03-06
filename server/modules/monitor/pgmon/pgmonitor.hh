@@ -20,7 +20,7 @@ class PgServer;
 class PgMonitor : public maxscale::SimpleMonitor
 {
 public:
-    ~PgMonitor();
+    ~PgMonitor() = default;
     static PgMonitor* create(const std::string& name, const std::string& module);
     json_t*           diagnostics() const override;
     json_t*           diagnostics(mxs::MonitorServer* server) const override;
@@ -28,7 +28,6 @@ public:
     mxs::config::Configuration& configuration() override final;
 
 protected:
-    bool has_sufficient_permissions() override;
     void update_server_status(mxs::MonitorServer* monitored_server) override;
     void pre_tick() override;
     void post_tick() override;
@@ -39,18 +38,22 @@ protected:
     {
     public:
         Config(const std::string& name, PgMonitor* monitor);
-
         bool post_configure(const std::map<std::string, mxs::ConfigParameters>& nested_params) override final;
-
-
     private:
         PgMonitor* m_monitor;
     };
 
 private:
     Config      m_config;
+
+    std::vector<PgServer*> m_servers;           /**< Active/configured servers */
+    PgServer*              m_master {nullptr};  /**< Master server */
+
     PgMonitor(const std::string& name, const std::string& module);
 
     bool        post_configure();
     friend bool Config::post_configure(const std::map<std::string, mxs::ConfigParameters>& nested_params);
+    std::string permission_test_query() const override;
+    void        configured_servers_updated(const std::vector<SERVER*>& servers) override;
+    void        pre_loop() override;
 };
