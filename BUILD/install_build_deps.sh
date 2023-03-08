@@ -77,7 +77,7 @@ then
        build-essential libssl-dev ncurses-dev bison flex \
        perl libtool tcl tcl-dev uuid \
        uuid-dev libsqlite3-dev liblzma-dev libpam0g-dev pkg-config \
-       libedit-dev libcurl4-openssl-dev libatomic1 \
+       libedit-dev libcurl4-openssl-dev libatomic1 libpq-dev \
        libsasl2-dev libxml2-dev libkrb5-dev libicu-dev unixodbc-dev
 
   # One of these will work, older systems use libsystemd-daemon-dev
