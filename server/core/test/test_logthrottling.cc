@@ -12,6 +12,7 @@
  * Public License.
  */
 
+#include <maxbase/semaphore.hh>
 #include <maxscale/log.hh>
 #include <unistd.h>
 #include <cstdio>
@@ -36,11 +37,11 @@ namespace
 {
 
 const char LOGNAME[] = "maxscale.log";
-static string logfile;
+string logfile;
 const size_t N_THREADS = 4;
 
-sem_t u_semstart;
-sem_t u_semfinish;
+mxb::Semaphore u_semstart;
+mxb::Semaphore u_semfinish;
 
 void ensure(bool ok)
 {
@@ -61,7 +62,6 @@ ostream& operator<<(ostream& out, const MXB_LOG_THROTTLING& t)
 bool check_messages(istream& in, size_t n_expected)
 {
     string line;
-
     size_t count = 0;
 
     while (std::getline(in, line))
@@ -69,7 +69,15 @@ bool check_messages(istream& in, size_t n_expected)
         ++count;
     }
 
-    cout << "Status: expected " << n_expected << " messages, found " << count << "." << endl;
+    bool ok = (count == n_expected);
+    if (ok)
+    {
+        cout << "Found " << count << " messages, as expected.\n";
+    }
+    else
+    {
+        cout << "###ERROR### Found " << count << " messages when " << n_expected << " was expected.\n";
+    }
 
     return count == n_expected;
 }
@@ -94,18 +102,18 @@ struct THREAD_ARG
 void* thread_main(void* pv)
 {
     THREAD_ARG* parg = static_cast<THREAD_ARG*>(pv);
-
-    sem_wait(&u_semstart);
+    u_semstart.wait();
 
     log_messages(parg->id, parg->n_generate, parg->priority);
 
-    sem_post(&u_semfinish);
+    u_semfinish.post();
     return 0;
 }
 
 bool run(const MXB_LOG_THROTTLING& throttling, int priority, size_t n_generate, size_t n_expect)
 {
-    cout << "Logging " << n_generate << " messages with throttling as " << throttling << "," << endl;
+    cout << "Trying to log " << n_generate * N_THREADS << " messages with throttling as "
+         << throttling << ".\n";
 
     mxb_log_set_throttling(&throttling);    // Causes message to be logged.
 
@@ -127,21 +135,12 @@ bool run(const MXB_LOG_THROTTLING& throttling, int priority, size_t n_generate, 
         ensure(rc == 0);
     }
 
-    sleep(1);
+    usleep(1000);   // sleep 1ms, should be enough for all threads to be waiting for semaphore.
 
     // Let them loose.
-    for (size_t i = 0; i < N_THREADS; ++i)
-    {
-        int rc = sem_post(&u_semstart);
-        ensure(rc == 0);
-    }
-
+    u_semstart.post_n(N_THREADS);
     // Wait for the results.
-    for (size_t i = 0; i < N_THREADS; ++i)
-    {
-        int rc = sem_wait(&u_semfinish);
-        ensure(rc == 0);
-    }
+    u_semfinish.wait_n(N_THREADS);
 
     for (size_t i = 0; i < N_THREADS; ++i)
     {
@@ -154,25 +153,17 @@ bool run(const MXB_LOG_THROTTLING& throttling, int priority, size_t n_generate, 
 
 int main(int argc, char* argv[])
 {
-    int rc;
-
+    int rc = 0;
     std::ios::sync_with_stdio();
-    rc = sem_init(&u_semstart, 0, 0);
-    ensure(rc == 0);
-
-    rc = sem_init(&u_semfinish, 0, 0);
-    ensure(rc == 0);
-
 
     char tmpbuf[] = "/tmp/maxscale_test_logthrottling_XXXXXX";
     char* logdir = mkdtemp(tmpbuf);
     ensure(logdir);
-    logfile.assign(string(logdir) + '/' + LOGNAME);
+    logfile = string(logdir) + '/' + LOGNAME;
 
     if (mxs_log_init(NULL, logdir, MXB_LOG_TARGET_FS))
     {
         MXB_LOG_THROTTLING t;
-
         t.count = 0;
         t.window_ms = 0;
         t.suppress_ms = 0;
@@ -184,8 +175,8 @@ int main(int argc, char* argv[])
         }
 
         t.count = 10;
-        t.window_ms = 2000;
-        t.suppress_ms = 5000;
+        t.window_ms = 50;
+        t.suppress_ms = 200;
 
         // 100 messages * N_THREADS, but due to the throttling we should get only 10 messages.
         if (!run(t, LOG_ERR, 100, 10))
@@ -193,8 +184,10 @@ int main(int argc, char* argv[])
             rc = EXIT_FAILURE;
         }
 
-        cout << "Sleeping 7 seconds." << endl;
-        sleep(7);
+        cout << "Sleep over suppression window.\n";
+        // The sleep needs to be clearly larger than suppression window to get consistent results.
+        int suppress_sleep = 600 * 1000;
+        usleep(suppress_sleep);
 
         // 100 messages * N_THREADS, but due to the throttling we should get only 10 messages.
         // Since we slept longer than the suppression window, the previous message batch should
@@ -204,8 +197,8 @@ int main(int argc, char* argv[])
             rc = EXIT_FAILURE;
         }
 
-        cout << "Sleeping 1 seconds." << endl;
-        sleep(1);
+        cout << "Sleep over time window but not over suppression window. Should get no messages.\n";
+        usleep(100 * 1000);
 
         // 100 messages * N_THREADS, but since we should still be within the suppression
         // window, we should get no messages.
@@ -214,12 +207,12 @@ int main(int argc, char* argv[])
             rc = EXIT_FAILURE;
         }
 
-        cout << "Sleeping 6 seconds." << endl;
-        sleep(6);
+        cout << "Sleep over suppression window.\n";
+        usleep(suppress_sleep);
 
         t.count = 20;
-        t.window_ms = 1000;
-        t.suppress_ms = 5000;
+        t.window_ms = 100;
+        t.suppress_ms = 500;
 
         // 100 messages * N_THREADS, and since we slept longer than the suppression window,
         // we should get 20 messages.
@@ -229,8 +222,6 @@ int main(int argc, char* argv[])
         }
 
         t.count = 10;
-        t.window_ms = 1000;
-        t.suppress_ms = 5000;
 
         // 20 messages * N_THREADS, and since we are logging NOTICE messages, we should
         // get 20 * N_THREADS messages.
