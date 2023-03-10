@@ -593,12 +593,14 @@ void Monitor::set_active_servers(std::vector<MonitorServer*>&& servers)
     }
 
     // Update any services which use this monitor as a source of routing targets.
-    active_servers_updated();
+    mxs::MainWorker::get()->execute([this] () {
+        active_servers_updated();
+    }, mxb::Worker::EXECUTE_AUTO);
 }
 
 void Monitor::active_servers_updated()
 {
-    mxb_assert(!is_running() && is_main_worker());
+    mxb_assert(is_main_worker());
     service_update_targets(this, active_routing_servers());
 }
 

@@ -115,7 +115,7 @@ private:
     bool using_proxy_protocol() const;
     void populate_from_bootstrap_servers();
 
-    void add_server(SERVER* pServer);
+    void add_server(SERVER* it);
 
     void update_server_statuses();
 
@@ -184,12 +184,12 @@ private:
     SERVER*                  m_pHub_server {nullptr};
     MYSQL*                   m_pHub_con {nullptr};
     sqlite3*                 m_pDb {nullptr};
-    std::vector<SERVER*>     m_cluster_servers;
-    bool                     m_cluster_servers_changed {false};
     bool                     m_is_group_change {false};
     mxs::ConfigParameters    m_extra;
 
-    std::vector<XpandServer*> m_servers;    /**< Configured servers */
+    std::vector<XpandServer*> m_bootstrap_servers;    /**< Configured servers */
+    std::vector<XpandServer*> m_active_servers;        /**< Discovered servers */
+    bool                      m_active_servers_changed {false};
 
     void configured_servers_updated(const std::vector<SERVER*>& servers) override;
 };
