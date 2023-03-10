@@ -1180,7 +1180,6 @@ void XpandMonitor::update_server_statuses()
             // already be an IP-address.
             ips.insert(pMs->server->address());
         }
-
         auto it = find_if(m_nodes_by_id.begin(), m_nodes_by_id.end(),
                           [&ips](const std::pair<int, XpandNode>& element) -> bool {
                               const XpandNode& info = element.second;
@@ -1190,6 +1189,8 @@ void XpandMonitor::update_server_statuses()
 
         if (it != m_nodes_by_id.end())
         {
+            MXB_ERROR("update_server_statuses: %s found, IP: %s, node %s",
+                      pMs->server->name(), ips.begin()->c_str(), it->second.server()->name());
             const XpandNode& info = it->second;
 
             if (info.is_running())
@@ -1203,6 +1204,8 @@ void XpandMonitor::update_server_statuses()
         }
         else
         {
+            MXB_ERROR("update_server_statuses: %s missing, IP: %s",
+                      pMs->server->name(), ips.begin()->c_str());
             pMs->clear_pending_status(SERVER_MASTER | SERVER_RUNNING);
         }
     }
