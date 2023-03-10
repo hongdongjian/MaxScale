@@ -205,12 +205,6 @@ sqlite3* open_or_create_db(const std::string& path)
     return pDb;
 }
 
-void run_in_mainworker(const function<void(void)>& func)
-{
-    auto mw = mxs::MainWorker::get();
-    // Using the semaphore-version of 'execute' to wait until completion causes deadlock. Reason unclear.
-    mw->execute(func, mxb::Worker::EXECUTE_QUEUED);
-}
 }
 
 XpandMonitor::Config::Config(const std::string& name, XpandMonitor* pMonitor)
@@ -440,7 +434,11 @@ void XpandMonitor::tick()
     // At the end of a tick, sync any new servers. Must be done in MainWorker.
     if (m_cluster_servers_changed)
     {
-        service_add_server(this, pServer);
+        // Copy the array by value so it can be moved safely to another thread.
+        auto update = [mon = this, new_targets = m_cluster_servers]() {
+            service_update_targets(mon, new_targets);
+        };
+        mxs::MainWorker::get()->execute(update, mxb::Worker::EXECUTE_QUEUED);
         m_cluster_servers_changed = false;
     }
 }

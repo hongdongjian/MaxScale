@@ -559,7 +559,8 @@ public:
      */
     void active_servers_updated();
 
-    const std::vector<SERVER*>& active_routing_servers() const;
+    // Returns a copy for thread safety.
+    std::vector<SERVER*> active_routing_servers() const;
 
 protected:
 
@@ -867,11 +868,13 @@ private:
     /** Currently configured servers. Only written to and accessed from MainWorker. Changes only when
      * monitor is stopped for reconfiguration. */
     std::vector<SERVER*> m_conf_servers;
-    /** Actively monitored servers. Set by implementation during reconfiguration. Read by monitor when
-     * running and also by MainWorker (e.g. diagnostics). */
+    /** Actively monitored servers. Set by implementation during reconfiguration. Once monitor is running,
+     * should only be accessed by the monitor thread. */
     std::vector<MonitorServer*> m_servers;
-    /**< Same as above. Usually accessed by services and only from MainWorker. */
+    /** Actively monitored servers. Usually modified from MainWorker when monitor is shut down. XPandMon
+     * can modify this while monitor is running so access is protected by mutex. */
     std::vector<SERVER*> m_routing_servers;
+    mutable std::mutex   m_routing_servers_lock;
 
     std::string journal_filepath() const;
     bool        call_run_one_tick();

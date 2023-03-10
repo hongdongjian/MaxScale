@@ -575,14 +575,23 @@ bool Monitor::prepare_servers()
 
 void Monitor::set_active_servers(std::vector<MonitorServer*>&& servers)
 {
-    mxb_assert(!is_running() && is_main_worker());
+    mxb_assert((!is_running() && is_main_worker())
+        || (is_running() && mxb::Worker::get_current() == m_worker.get()));
     m_servers = std::move(servers);
     auto n_servers = m_servers.size();
-    m_routing_servers.resize(n_servers);
+
+    std::vector<SERVER*> new_routing_servers;
+    new_routing_servers.resize(n_servers);
     for (size_t i = 0; i < n_servers; i++)
     {
-        m_routing_servers[i] = m_servers[i]->server;
+        new_routing_servers[i] = m_servers[i]->server;
     }
+
+    {
+        Guard guard(m_routing_servers_lock);
+        m_routing_servers = std::move(new_routing_servers);
+    }
+
     // Update any services which use this monitor as a source of routing targets.
     active_servers_updated();
 }
@@ -590,19 +599,19 @@ void Monitor::set_active_servers(std::vector<MonitorServer*>&& servers)
 void Monitor::active_servers_updated()
 {
     mxb_assert(!is_running() && is_main_worker());
-    service_update_targets(*this);
+    service_update_targets(this, active_routing_servers());
 }
 
 const std::vector<MonitorServer*>& Monitor::active_servers() const
 {
     // Should only be called by a running monitor.
-    mxb_assert(mxb::Worker::get_current() == m_worker.get());
+    mxb_assert(is_running() && mxb::Worker::get_current() == m_worker.get());
     return m_servers;
 }
 
-const std::vector<SERVER*>& Monitor::active_routing_servers() const
+std::vector<SERVER*> Monitor::active_routing_servers() const
 {
-    mxb_assert(is_main_worker());
+    Guard guard(m_routing_servers_lock);
     return m_routing_servers;
 }
 
@@ -657,12 +666,12 @@ json_t* Monitor::to_json(const char* host) const
 
     std::string self = std::string(MXS_JSON_API_MONITORS) + name() + "/relationships/";
 
-    if (!m_servers.empty())
+    if (!m_conf_servers.empty())
     {
         json_t* mon_rel = mxs_json_relationship(host, self + "servers", MXS_JSON_API_SERVERS);
-        for (MonitorServer* db : m_servers)
+        for (auto* srv : m_conf_servers)
         {
-            mxs_json_add_relation(mon_rel, db->server->name(), CN_SERVERS);
+            mxs_json_add_relation(mon_rel, srv->name(), CN_SERVERS);
         }
         json_object_set_new(rel, CN_SERVERS, mon_rel);
     }

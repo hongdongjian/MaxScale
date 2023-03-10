@@ -512,27 +512,14 @@ static std::string get_version_string(const mxs::ConfigParameters& params)
     return version_string;
 }
 
-void service_add_server(Monitor* pMonitor, SERVER* pServer)
-{
-    LockGuard guard(this_unit.lock);
-
-    for (Service* pService : this_unit.services)
-    {
-        if (pService->cluster() == pMonitor)
-        {
-            pService->add_target(pServer);
-        }
-    }
-}
-
-void service_update_targets(const mxs::Monitor& monitor)
+void service_update_targets(const mxs::Monitor* monitor, const std::vector<SERVER*>& servers)
 {
     LockGuard guard(this_unit.lock);
     for (Service* pService : this_unit.services)
     {
-        if (pService->cluster() == &monitor)
+        if (pService->cluster() == monitor)
         {
-            pService->update_targets(monitor);
+            pService->update_targets(servers);
         }
     }
 }
@@ -1880,10 +1867,9 @@ void Service::add_target(Service* target)
     propagate_target_update();
 }
 
-void Service::update_targets(const Monitor& mon)
+void Service::update_targets(const std::vector<SERVER*>& servers)
 {
     mxb_assert(mxs::MainWorker::is_current());
-    const auto& servers = mon.active_routing_servers();
     m_data->targets.assign(servers.begin(), servers.end());
     propagate_target_update();
 }
@@ -2281,7 +2267,7 @@ bool Service::check_update_user_account_manager(mxs::ProtocolModule* protocol_mo
 
 void Service::set_cluster(mxs::Monitor* monitor)
 {
-    const auto& servers = monitor->active_routing_servers();
+    const auto servers = monitor->active_routing_servers();
     m_data->targets.assign(servers.begin(), servers.end());
     m_monitor = monitor;
 }
