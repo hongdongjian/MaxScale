@@ -39,6 +39,7 @@ public:
     static Server* create_server(const char* name, const mxs::ConfigParameters& params);
     static Server* create_server(const char* name, json_t* json);
 
+    static Server* create_volatile_server(const std::string& name, const mxs::ConfigParameters& params);
     /**
      * Deallocate the server.
      *
