@@ -185,6 +185,7 @@ private:
     MYSQL*                   m_pHub_con {nullptr};
     sqlite3*                 m_pDb {nullptr};
     std::vector<SERVER*>     m_cluster_servers;
+    bool                     m_cluster_servers_changed {false};
     bool                     m_is_group_change {false};
     mxs::ConfigParameters    m_extra;
 

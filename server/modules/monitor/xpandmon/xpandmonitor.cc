@@ -397,7 +397,7 @@ void XpandMonitor::tick()
     {
         if (m_config.dynamic_node_detection())
         {
-            // At startup we accept softfailed nodes in an attempt to be able to
+            // At startup, we accept softfailed nodes in an attempt to be able to
             // connect at any cost. It'll be replaced once there is an alternative.
             check_cluster(xpand::Softfailed::ACCEPT);
         }
@@ -436,6 +436,13 @@ void XpandMonitor::tick()
     detect_handle_state_changes();
     hangup_failed_servers();
     write_journal_if_needed();
+
+    // At the end of a tick, sync any new servers. Must be done in MainWorker.
+    if (m_cluster_servers_changed)
+    {
+        service_add_server(this, pServer);
+        m_cluster_servers_changed = false;
+    }
 }
 
 bool XpandMonitor::query(MYSQL* pCon, const char* zQuery)
@@ -774,10 +781,7 @@ bool XpandMonitor::refresh_nodes(MYSQL* pHub_con)
                                                health_check_threshold, pServer);
 
                                 m_nodes_by_id.insert(make_pair(id, node));
-
-                                run_in_mainworker([this, pServer]() {
-                                                          add_server(pServer);
-                                                      });
+                                add_server(pServer);
                             }
 
                             memberships.erase(mit);
@@ -1128,9 +1132,7 @@ void XpandMonitor::populate_from_bootstrap_servers()
 
         // New server, so it needs to be added to all services that
         // use this monitor for defining its cluster of servers.
-        run_in_mainworker([this, pServer]() {
-                              add_server(pServer);
-                          });
+        add_server(pServer);
     }
 
     update_http_urls();
@@ -1138,7 +1140,7 @@ void XpandMonitor::populate_from_bootstrap_servers()
 
 void XpandMonitor::add_server(SERVER* pServer)
 {
-    mxb_assert(mxs::MainWorker::is_current());
+    mxb_assert(mxb::Worker::get_current() == m_worker.get());
 
     // Servers are never deleted, but once created they stay around, also
     // in m_cluster_servers. Thus, to prevent double book-keeping it must
@@ -1151,8 +1153,7 @@ void XpandMonitor::add_server(SERVER* pServer)
     if (std::find(b, e, pServer) == e)
     {
         m_cluster_servers.push_back(pServer);
-        // TODO: call set_active_servers(). Need to add MonitorServer* array
-        service_add_server(this, pServer);
+        m_cluster_servers_changed = true;
     }
 }
 
