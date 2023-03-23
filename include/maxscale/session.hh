@@ -290,7 +290,7 @@ public:
         return m_user;
     }
 
-    void set_user(const std::string& user)
+    void set_user(std::string_view user)
     {
         m_user = user;
     }

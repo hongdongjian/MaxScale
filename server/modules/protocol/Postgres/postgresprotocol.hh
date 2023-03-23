@@ -201,6 +201,9 @@ static inline uint32_t get_uint32(const uint8_t* ptr)
     return be32toh(value);
 }
 
+uint32_t                           consume_uint32(const uint8_t*& ptr);
+std::tuple<bool, std::string_view> consume_zstring(const uint8_t*& ptr, const uint8_t* end);
+
 /**
  * Get a null-terminated string
  *

@@ -17,6 +17,10 @@
 #include <maxscale/service.hh>
 #include "pgparser.hh"
 #include "pgprotocoldata.hh"
+#include "pgusermanager.hh"
+
+using std::string;
+using std::string_view;
 
 namespace
 {
@@ -48,13 +52,9 @@ void add_packet_ready_for_query(GWBUF& gwbuf)
 }
 }
 
-bool PgClientConnection::validate_cleartext_auth(const GWBUF& reply)
-{
-    return true;
-}
-
 PgClientConnection::PgClientConnection(MXS_SESSION* pSession, mxs::Component* pComponent)
     : m_session(*pSession)
+    , m_protocol_data(static_cast<PgProtocolData*>(pSession->protocol_data()))
     , m_ssl_required(m_session.listener_data()->m_ssl.config().enabled)
     , m_down(pComponent)
 {
@@ -76,157 +76,225 @@ bool PgClientConnection::setup_ssl()
 void PgClientConnection::ready_for_reading(DCB* dcb)
 {
     mxb_assert(m_dcb == dcb);
+    bool state_machine_continue = true;
 
-    pg::ExpectCmdByte expect = m_state == State::INIT ? pg::ExpectCmdByte::NO : pg::ExpectCmdByte::YES;
-
-    if (auto [ok, gwbuf] = pg::read_packet(m_dcb, expect); ok && gwbuf)
+    while (state_machine_continue)
     {
         switch (m_state)
         {
-        case State::INIT:
-            m_state = state_init(gwbuf);
+        case State::HANDSHAKE:
+            state_machine_continue = state_handshake();
             break;
 
         case State::AUTH:
-            m_state = state_auth(gwbuf);
+            state_machine_continue = state_auth();
             break;
 
         case State::ROUTE:
-            m_state = state_route(std::move(gwbuf));
+            state_machine_continue = state_route();
             break;
 
         case State::ERROR:
-            // pass, handled below
+            m_session.kill();
+            state_machine_continue = false;
             break;
         }
     }
-
-    // TODO: This is not efficient, especially if the client normally sends
-    //       multiple packets in State::ROUTE.
-    if (!m_dcb->readq_empty())
-    {
-        m_dcb->trigger_read_event();
-    }
-
-    if (m_state == State::ERROR)
-    {
-        m_session.kill();
-    }
 }
 
-PgClientConnection::State PgClientConnection::state_init(const GWBUF& gwbuf)
+bool PgClientConnection::state_handshake()
 {
-    State next_state = State::ERROR;
+    bool caller_continue = true;
+    bool state_machine_continue = true;
 
-    uint32_t first_word = pg::get_uint32(gwbuf.data() + 4);
-
-    if (gwbuf.length() == 8 && first_word == pg::SSLREQ_MAGIC)
-    {
-        uint8_t auth_resp[] = {m_ssl_required ? pg::SSLREQ_YES : pg::SSLREQ_NO};
-        write(GWBUF {auth_resp, sizeof(auth_resp)});
-
-        if (m_ssl_required && !setup_ssl())
+    auto handle_startup_message = [&](GWBUF&& buffer) {
+        auto res = parse_startup_message(buffer);
+        switch (res)
         {
-            MXB_ERROR("SSL setup failed, closing PG client connection.");
-            next_state = State::ERROR;
+        case StateMachineRes::IN_PROGRESS:
+            m_dcb->unread(std::move(buffer));
+            state_machine_continue = false;
+            caller_continue = false;
+            break;
+
+        case StateMachineRes::DONE:
+            state_machine_continue = false;
+            m_state = State::AUTH;
+            break;
+
+        case StateMachineRes::ERROR:
+            m_hs_state = HSState::FAIL;
+            break;
         }
-        else
+    };
+
+    while (state_machine_continue)
+    {
+        switch (m_hs_state)
         {
-            next_state = State::INIT;   // Waiting for Startup message
+        case HSState::INIT:
+            {
+                // Client may have sent a StartupMessage or an SSLRequest. Read a limited amount since client
+                // cannot be trusted yet. Both packets are at least 8 bytes.
+                auto [read_ok, buffer] = m_dcb->read(8, 100000);
+                if (!buffer.empty())
+                {
+                    auto ptr = buffer.data();
+                    uint32_t len = pg::get_uint32(ptr);
+                    uint32_t code = pg::get_uint32(ptr + 4);
+
+                    if (len == 8 && code == pg::SSLREQ_MAGIC)
+                    {
+                        if (buffer.length() == 8)
+                        {
+                            // Valid SSLRequest, reply with either 'S' or 'N'.
+                            if (m_ssl_required)
+                            {
+                                uint8_t ssl_yes[] = {pg::SSLREQ_YES};
+                                write(GWBUF {ssl_yes, sizeof(ssl_yes)});
+                                if (setup_ssl())
+                                {
+                                    // SSL may not be done yet, but execution returns to this function only
+                                    // after it's complete.
+                                    m_hs_state = HSState::STARTUP_MSG;
+                                    state_machine_continue = false;
+                                    caller_continue = false;
+                                }
+                                else
+                                {
+                                    m_hs_state = HSState::FAIL;
+                                }
+                            }
+                            else
+                            {
+                                uint8_t no_ssl[] = {pg::SSLREQ_NO};
+                                write(GWBUF {no_ssl, sizeof(no_ssl)});
+                                m_hs_state = HSState::STARTUP_MSG;
+                                state_machine_continue = false;     // Message should not be available yet.
+                                caller_continue = false;
+                            }
+                        }
+                        else
+                        {
+                            // Invalid SSLRequest. Handle properly later.
+                            m_hs_state = HSState::FAIL;
+                        }
+                    }
+                    else
+                    {
+                        // Looks like client sent StartupMessage immediately.
+                        if (m_ssl_required)
+                        {
+                            // Not allowed. TODO: add error message.
+                            m_hs_state = HSState::FAIL;
+                        }
+                        else
+                        {
+                            handle_startup_message(std::move(buffer));
+                        }
+                    }
+                }
+                else if (read_ok)
+                {
+                    // Not enough data, wait for more.
+                    state_machine_continue = false;
+                    caller_continue = false;
+                }
+                else
+                {
+                    m_hs_state = HSState::FAIL;
+                }
+            }
+            break;
+
+        case HSState::STARTUP_MSG:
+            {
+                // Client should have sent a StartupMessage. It's at least (4 + 4 + 3) bytes.
+                auto [read_ok, buffer] = m_dcb->read(11, 100000);
+                if (!buffer.empty())
+                {
+                    handle_startup_message(std::move(buffer));
+                }
+                else if (read_ok)
+                {
+                    state_machine_continue = false;
+                    caller_continue = false;
+                }
+                else
+                {
+                    m_hs_state = HSState::FAIL;
+                }
+            }
+            break;
+
+        case HSState::FAIL:
+            state_machine_continue = false;
+            m_state = State::ERROR;
+            break;
         }
     }
-    else
-    {
-        auto data = static_cast<PgProtocolData*>(m_session.protocol_data());
-        data->set_connect_params(gwbuf);
-
-        GWBUF reply;
-        add_packet_auth_request(reply, pg_prot_data_auth_method);
-
-        if (pg_prot_data_auth_method != pg::AUTH_OK)
-        {
-            next_state = State::AUTH;
-        }
-        else if (m_session.state() == MXS_SESSION::State::CREATED && m_session.start())
-        {
-            add_packet_ready_for_query(reply);
-            next_state = State::ROUTE;
-        }
-        else
-        {
-            MXB_ERROR("Could not start session, closing PG client connection.");
-            reply.clear();
-            next_state = State::ERROR;
-        }
-
-        if (reply.length())
-        {
-            m_dcb->writeq_append(std::move(reply));
-        }
-    }
-
-    return next_state;
+    return caller_continue;
 }
 
-PgClientConnection::State PgClientConnection::state_auth(const GWBUF& gwbuf)
+bool PgClientConnection::state_auth()
 {
-    enum class Result {READY, CONTINUE, ERROR};
-    auto result = Result::ERROR;
+    bool caller_continue = true;
+    bool state_machine_continue = true;
 
-    switch (pg_prot_data_auth_method)
+    while (state_machine_continue)
     {
-    case pg::AUTH_CLEARTEXT:
-        if (validate_cleartext_auth(gwbuf))
+        switch (m_auth_state)
         {
-            result = Result::READY;
-        }
-        break;
+        case AuthState::FIND_ENTRY:
+            if (check_user_account_entry())
+            {
+                m_auth_state = AuthState::COMPLETE;
+            }
+            else
+            {
+                m_auth_state = AuthState::FAIL;
+            }
+            break;
 
-    default:
-        mxb_assert(!true);
-        result = Result::ERROR;
-        MXB_SERROR("Unsupported authentication method: " << pg_prot_data_auth_method);
-        break;
+        case AuthState::COMPLETE:
+            {
+                // Send AuthenticationOk-message.
+                GWBUF auth_ok(9);
+                auto ptr = auth_ok.data();
+                *ptr++ = 'R';
+                ptr += pg::set_uint32(ptr, 8);
+                pg::set_uint32(ptr, 0);
+                write(std::move(auth_ok));
+
+                state_machine_continue = false;
+                m_state = prepare_session() ? State::ROUTE : State::ERROR;
+            }
+            break;
+
+        case AuthState::FAIL:
+            // TODO: send error
+            m_state = State::ERROR;
+            state_machine_continue = false;
+            break;
+        }
     }
-
-    auto next_state = State::ERROR;
-
-    switch (result)
-    {
-    case Result::READY:
-        if (m_session.state() == MXS_SESSION::State::CREATED && m_session.start())
-        {
-            GWBUF rdy;
-            add_packet_auth_request(rdy, pg::AUTH_OK);
-            add_packet_ready_for_query(rdy);
-            write(std::move(rdy));
-            next_state = State::ROUTE;
-        }
-        else
-        {
-            MXB_ERROR("Could not start session, closing PG client connection.");
-            next_state = State::ERROR;
-        }
-        break;
-
-    case Result::ERROR:
-        MXB_ERROR("Authentication failed, closing PG client connection.");
-        next_state = State::ERROR;
-        break;
-
-    case Result::CONTINUE:
-        next_state = State::AUTH;
-        break;
-    }
-
-    return next_state;
+    return caller_continue;
 }
 
-PgClientConnection::State PgClientConnection::state_route(GWBUF&& gwbuf)
+bool PgClientConnection::state_route()
 {
-    m_down->routeQuery(std::move(gwbuf));
-
-    return State::ROUTE;
+    bool caller_continue = false;
+    auto [ok, buffer] = pg::read_packet(m_dcb);
+    if (!buffer.empty())
+    {
+        m_down->routeQuery(std::move(buffer));
+    }
+    else if (!ok)
+    {
+        m_state = State::ERROR;
+        caller_continue = true;
+    }
+    return caller_continue;
 }
 
 void PgClientConnection::write_ready(DCB* dcb)
@@ -299,4 +367,120 @@ mxs::Parser* PgClientConnection::parser()
 size_t PgClientConnection::sizeof_buffers() const
 {
     return 0;
+}
+
+PgClientConnection::StateMachineRes PgClientConnection::parse_startup_message(const GWBUF& buf)
+{
+    // TODO: add error messages to the fail cases.
+    auto rval = StateMachineRes::ERROR;
+    auto buflen = buf.length();
+    mxb_assert(buflen >= 8);
+    auto ptr = buf.data();
+    auto prot_packet_len = pg::consume_uint32(ptr);
+    if (prot_packet_len <= 8)
+    {
+        // too small
+    }
+    else if (prot_packet_len <= 100000)
+    {
+        if (prot_packet_len < buflen)
+        {
+            // Client sent extra data already? Is this allowed?
+        }
+        else if (prot_packet_len == buflen)
+        {
+            string_view username;
+            string_view database;
+            string_view replication;
+            // StartupMessage: 4 bytes length, 4 bytes magic number, then pairs of strings.
+            uint32_t protocol_version = pg::consume_uint32(ptr);
+            if (protocol_version == pg::PROTOCOL_V3_MAGIC)
+            {
+                bool param_parse_error = false;
+                const auto params_begin = ptr;
+                const auto end = buf.end();
+                while (ptr < end - 1)
+                {
+                    auto [name_ok, param_name] = pg::consume_zstring(ptr, end);
+                    auto [val_ok, param_value] = pg::consume_zstring(ptr, end);
+                    if (name_ok && val_ok)
+                    {
+                        // Only recognize a few parameters. Most of the parameters should be sent as is
+                        // to backends.
+                        if (param_name == "user")
+                        {
+                            username = param_value;
+                        }
+                        else if (param_name == "database")
+                        {
+                            database = param_value;
+                        }
+                        else if (param_name == "replication")
+                        {
+                            replication = param_value;
+                        }
+                    }
+                    else
+                    {
+                        param_parse_error = true;
+                        break;
+                    }
+                }
+
+                if (!param_parse_error)
+                {
+                    // There should be one final 0 at the end.
+                    if (end - ptr == 1 && *ptr == '\0')
+                    {
+                        m_session.set_user(username);
+                        m_protocol_data->set_default_database(database);
+                        m_protocol_data->set_connect_params(params_begin, end);
+                        rval = StateMachineRes::DONE;
+                    }
+                }
+            }
+        }
+        else
+        {
+            // Not enough data, read again.
+            rval = StateMachineRes::IN_PROGRESS;
+        }
+    }
+    else
+    {
+        // too big
+    }
+    return rval;
+}
+
+bool PgClientConnection::check_user_account_entry()
+{
+    auto& ses = m_session;
+    auto users = static_cast<const PgUserCache*>(ses.service->user_account_cache());
+    return users->find_user(ses.user(), ses.client_remote(), m_protocol_data->default_db());
+}
+
+bool PgClientConnection::prepare_session()
+{
+    bool rval = false;
+    mxb_assert(m_session.state() == MXS_SESSION::State::CREATED);
+    if (m_session.start())
+    {
+        // Send at least the ReadyForQuery-packet.
+        // TODO: Send keydata and parameter status?
+        const size_t rdy_len = 1 + 4 + 1;       // Byte1('R'), Int32(8) len, Int8 trx status
+        GWBUF ready(rdy_len);
+        uint8_t* ptr = ready.data();
+        *ptr++ = pg::READY_FOR_QUERY;
+        ptr += pg::set_uint32(ptr, 5);
+        *ptr++ = 'I';   // trx idle
+        write(std::move(ready));
+        rval = true;
+    }
+    else
+    {
+        // TODO: Send internal error.
+        MXB_ERROR("Failed to create session for %s.", m_session.user_and_host().c_str());
+    }
+    return rval;
 }

@@ -331,6 +331,37 @@ bool is_prepare(const GWBUF& packet)
     return packet.length() > 0 && packet[0] == pg::PARSE;
 }
 
+uint32_t consume_uint32(const uint8_t*& ptr)
+{
+    uint32_t value = get_uint32(ptr);
+    ptr += 4;
+    return value;
+}
+
+std::tuple<bool, std::string_view> consume_zstring(const uint8_t*& ptr, const uint8_t* end)
+{
+    bool ok = false;
+    std::string_view result;
+    auto* str = reinterpret_cast<const char*>(ptr);
+    // Pg strings should be 0-terminated.
+    size_t len_remaining = end - ptr;
+    if (len_remaining > 0)
+    {
+        auto len = strnlen(str, len_remaining);
+        if (len < len_remaining)
+        {
+            result = std::string_view(str, len);
+            ptr += len + 1;
+            ok = true;
+        }
+        else
+        {
+            ptr += len_remaining;
+        }
+    }
+    return {ok, result};
+}
+
 }
 
 /**

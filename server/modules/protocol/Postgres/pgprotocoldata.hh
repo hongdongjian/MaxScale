@@ -32,11 +32,7 @@ public:
     size_t static_size() const override;
     size_t varying_size() const override;
 
-    void set_connect_params(const GWBUF& buf)
-    {
-        mxb_assert_message(buf.length() > 8, "StartupMessage should be longer than 8 bytes");
-        m_params.assign(buf.data() + 8, buf.end());
-    }
+    void set_connect_params(const uint8_t* begin, const uint8_t* end);
 
     const std::vector<uint8_t>& connect_params() const
     {
@@ -44,8 +40,12 @@ public:
     }
 
     void set_in_trx(bool in_trx);
+    void set_default_database(std::string_view db);
+
+    const std::string& default_db() const;
 
 private:
+    std::string          m_database;
     std::vector<uint8_t> m_params;
     bool                 m_in_trx {false};
 };

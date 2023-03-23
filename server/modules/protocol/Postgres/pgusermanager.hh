@@ -124,6 +124,8 @@ public:
     bool can_update_immediately() const;
     int  version() const;
 
+    bool find_user(std::string_view user, std::string_view host, std::string_view db) const;
+
 private:
     const PgUserManager&   m_master;    /**< User database master copy */
     PgUserManager::SUserDB m_userdb;    /**< Local pointer to user database */

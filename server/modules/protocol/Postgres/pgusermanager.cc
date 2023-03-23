@@ -374,6 +374,12 @@ int PgUserCache::version() const
     return m_userdb_version;
 }
 
+bool PgUserCache::find_user(std::string_view user, std::string_view host, std::string_view db) const
+{
+    // TODO: properly check user, return records
+    return true;
+}
+
 bool PgUserDatabase::HbaEntry::operator==(const PgUserDatabase::HbaEntry& rhs) const
 {
     return usernames == rhs.usernames && db_names == rhs.db_names

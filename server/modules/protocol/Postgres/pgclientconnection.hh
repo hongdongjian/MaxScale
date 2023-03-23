@@ -17,6 +17,8 @@
 #include <maxscale/protocol2.hh>
 #include <maxscale/session.hh>
 
+class PgProtocolData;
+
 class PgClientConnection final : public mxs::ClientConnectionBase
 {
 public:
@@ -44,23 +46,50 @@ public:
 private:
     enum class State
     {
-        INIT,          // Expecting either SSL request or Startup msg
-        AUTH,          // Authentication (not entered if method is trust)
-        ROUTE,         // Entered after Startup msg reply has been sent
-        ERROR
+        HANDSHAKE,      /**< Expecting either SSL request or StartupMessage */
+        AUTH,           /**< Authenticating */
+        ROUTE,          /**< Ready to route queries */
+        ERROR           /**< Error, stop session */
     };
 
-    State state_init(const GWBUF& gwbuf);
-    State state_auth(const GWBUF& gwbuf);
-    State state_route(GWBUF&& gwbuf);
+    enum class HSState
+    {
+        INIT,           /**< Initial handshake state */
+        STARTUP_MSG,    /**< Expecting client to send StartupMessage */
+        FAIL,           /**< Handshake failed */
+    };
+    bool state_handshake();
+
+    enum class AuthState
+    {
+        FIND_ENTRY,
+        COMPLETE,
+        FAIL,
+    };
+    bool state_auth();
+    bool prepare_session();
+    bool state_route();
 
     // Return true if ssl handshake succeeded or is in progress
     bool setup_ssl();
-    bool validate_cleartext_auth(const GWBUF& reply);
 
-    State           m_state = State::INIT;
+    /** Return type of a lower level state machine */
+    enum class StateMachineRes
+    {
+        IN_PROGRESS,// The function should be called again once more data is available.
+        DONE,       // Function is complete, the protocol may advance to next state.
+        ERROR,      // Error. The connection should be closed.
+    };
+    StateMachineRes parse_startup_message(const GWBUF& buf);
+
+    bool check_user_account_entry();
+
+    State           m_state {State::HANDSHAKE};
+    HSState         m_hs_state {HSState::INIT};
+    AuthState       m_auth_state {AuthState::FIND_ENTRY};
     MXS_SESSION&    m_session;
-    bool            m_ssl_required;
+    PgProtocolData* m_protocol_data {nullptr};
+    bool            m_ssl_required {false};
     mxs::Component* m_down;
 
     // Will be provided by the monitor
