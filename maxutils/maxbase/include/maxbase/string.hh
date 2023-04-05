@@ -14,6 +14,7 @@
 #pragma once
 
 #include <maxbase/ccdefs.hh>
+#include <maxbase/assert.hh>
 #include <algorithm>
 #include <string>
 #include <sstream>
@@ -73,7 +74,10 @@ std::string cat(Args&& ... args)
     static_assert(std::conjunction_v<std::is_constructible<std::string_view, Args> ...>,
                   "Must be able to construct a std::string_view from all types");
     std::string rval;
+    size_t total = (0 + ... + std::string_view(args).size());
+    rval.reserve(total);
     (rval += ... += args);
+    mxb_assert(rval.size() == total);
     return rval;
 }
 
