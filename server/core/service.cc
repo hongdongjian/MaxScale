@@ -96,6 +96,8 @@ const char CN_SESSION_TRACK_TRX_STATE[] = "session_track_trx_state";
 const char CN_STRIP_DB_ESC[] = "strip_db_esc";
 }
 
+static void service_calculate_weights(Service* service);
+
 Service* Service::create(const char* name, const char* router, mxs::ConfigParameters* params)
 {
     MXS_ROUTER_OBJECT* router_api = (MXS_ROUTER_OBJECT*)load_module(router, MODULE_ROUTER);
@@ -367,6 +369,9 @@ int serviceStartAllPorts(Service* service)
  */
 int serviceInitialize(Service* service)
 {
+    /** Calculate the server weights */
+    service_calculate_weights(service);
+
     int listeners = 0;
 
     if (!mxs::Config::get().config_check)
@@ -1947,4 +1952,52 @@ bool Service::remove_cluster(mxs::Monitor* monitor)
     }
 
     return rval;
+}
+
+static void service_calculate_weights(Service* service)
+{
+    double total {0};
+
+    /** Calculate total weight */
+    for (auto target : service->get_children())
+    {
+        total +=  target->weight();
+    }
+
+    if (total == 0)
+    {
+        MXB_WARNING("no servers have weight parameter for service '%s'", service->name());
+        for (auto target : service->get_children()) {
+            target->set_server_weight(1);
+        }
+    }
+    else
+    {
+        /** Calculate the relative weight of the servers */
+        for (auto target : service->get_children())
+        {
+            if (target->weight() > 0)
+            {
+                target->set_server_weight(target->weight() / total);
+            }
+            else
+            {
+                MXB_WARNING("Weight parameter is not set for server '%s'."
+                            " The runtime weight will be set to 0", target->name());
+                target->set_server_weight(0);
+            }
+        }
+    }
+}
+
+void service_update_weights()
+{
+    /* Mutex, automatically released when out of scope. */
+    LockGuard guard(this_unit.lock);
+    
+    /* Update weights for all services */
+    for (Service* service : this_unit.services)
+    {
+        service_calculate_weights(service);
+    }
 }

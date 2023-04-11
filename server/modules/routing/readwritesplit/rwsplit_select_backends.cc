@@ -116,7 +116,8 @@ RWBackend* best_score(PRWBackends& sBackends, std::function<double(mxs::Endpoint
 RWBackend* backend_cmp_global_conn(PRWBackends& sBackends)
 {
     static auto server_score = [](mxs::Endpoint* e) {
-            return e->target()->stats().n_current;
+            return e->target()->get_server_weight() ? (e->target()->stats().n_current + 1) / e->target()->get_server_weight() :
+                   std::numeric_limits<double>::max();
         };
 
     return best_score(sBackends, server_score);
@@ -126,7 +127,8 @@ RWBackend* backend_cmp_global_conn(PRWBackends& sBackends)
 RWBackend* backend_cmp_behind_master(PRWBackends& sBackends)
 {
     static auto server_score = [](mxs::Endpoint* e) {
-            return e->target()->replication_lag();
+            return e->target()->get_server_weight() ? (e->target()->replication_lag() + 1) / e->target()->get_server_weight() :
+                   std::numeric_limits<double>::max();
         };
 
     return best_score(sBackends, server_score);
@@ -136,7 +138,8 @@ RWBackend* backend_cmp_behind_master(PRWBackends& sBackends)
 RWBackend* backend_cmp_current_load(PRWBackends& sBackends)
 {
     static auto server_score = [](mxs::Endpoint* e) {
-            return e->target()->stats().n_current_ops;
+            return e->target()->get_server_weight() ? (e->target()->stats().n_current_ops + 1) / e->target()->get_server_weight() :
+                   std::numeric_limits<double>::max();
         };
 
     return best_score(sBackends, server_score);

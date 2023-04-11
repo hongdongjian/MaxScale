@@ -325,3 +325,6 @@ int serviceSessionCountAll(void);
  * @return The version of the service.
  */
 uint64_t service_get_version(const SERVICE* service, service_version_which_t which);
+
+/** Update the server weights used by services */
+void service_update_weights();

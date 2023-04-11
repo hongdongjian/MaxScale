@@ -310,6 +310,12 @@ public:
     virtual int64_t priority() const = 0;
 
     /**
+     * Get current server weight
+     * This should be used to decide which server to query next. Currently only readwrite split uses it.
+    */
+    virtual int64_t weight() const = 0;
+
+    /**
      * Convert the configuration into parameters
      *
      * @return The server configuration
