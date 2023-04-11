@@ -116,6 +116,11 @@ public:
         m_settings.m_priority.set(priority);
     }
 
+    void set_weight(int64_t weight)
+    {
+        m_settings.m_weight.set(weight);
+    }
+
     bool have_disk_space_limits() const override
     {
         return m_settings.m_have_disk_space_limits.load(std::memory_order_relaxed);
@@ -148,6 +153,11 @@ public:
     int64_t priority() const override
     {
         return m_settings.m_priority.get();
+    }
+
+    int64_t weight() const override
+    {
+        return m_settings.m_weight.get();
     }
 
     /**
@@ -374,6 +384,8 @@ private:
         mxs::config::Count m_extra_port;
         // The priority of this server, Currently only used by galeramon to pick which server is the master
         mxs::config::Integer m_priority;
+        // The weight of this server, used to calculate the probability of routing to this server
+        mxs::config::Integer m_weight;
         // @see monuser
         mxs::config::String m_monitoruser;
         // @see monpw

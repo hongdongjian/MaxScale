@@ -1958,6 +1958,8 @@ bool runtime_alter_server_from_json(Server* server, json_t* new_json)
         {
             if ((rval = server->configure(new_parameters)))
             {
+                /* The server has been updated, update services that use it */
+                service_update_weights();
                 std::ostringstream ss;
                 server->persist(ss);
                 rval = runtime_save_config(server->name(), ss.str());
@@ -1997,6 +1999,8 @@ bool runtime_alter_server_relationships_from_json(Server* server, const char* ty
 
         if (server_to_object_relations(server, old_json.get(), j.get()))
         {
+            /* The server relations has been updated, update services that use it */
+            service_update_weights();
             rval = true;
         }
     }
@@ -2209,6 +2213,8 @@ bool runtime_alter_service_relationships_from_json(Service* service, const char*
 
         if (runtime_alter_service_from_json(service, j.get()))
         {
+            // The service relationships have changed, update the runtime weights
+            service_update_weights();
             rval = true;
         }
     }

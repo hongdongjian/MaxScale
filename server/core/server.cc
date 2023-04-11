@@ -56,6 +56,7 @@ constexpr const char CN_MONITORUSER[] = "monitoruser";
 constexpr const char CN_PERSISTMAXTIME[] = "persistmaxtime";
 constexpr const char CN_PERSISTPOOLMAX[] = "persistpoolmax";
 constexpr const char CN_PRIORITY[] = "priority";
+constexpr const char CN_WEIGHT[] = "weight";
 constexpr const char CN_PROXY_PROTOCOL[] = "proxy_protocol";
 
 const char ERR_TOO_LONG_CONFIG_VALUE[] = "The new value for %s is too long. Maximum length is %i characters.";
@@ -127,6 +128,7 @@ static cfg::ParamString s_socket(&s_spec, CN_SOCKET, "Server UNIX socket", "", N
 static cfg::ParamCount s_port(&s_spec, CN_PORT, "Server port", 3306, AT_RUNTIME);
 static cfg::ParamCount s_extra_port(&s_spec, CN_EXTRA_PORT, "Server extra port", 0, AT_RUNTIME);
 static cfg::ParamInteger s_priority(&s_spec, CN_PRIORITY, "Server priority", 0, AT_RUNTIME);
+static cfg::ParamInteger s_weight(&s_spec, CN_WEIGHT, "Server weight", 0, AT_RUNTIME);
 static cfg::ParamString s_monitoruser(&s_spec, CN_MONITORUSER, "Monitor user", "", NO_QUOTES, AT_RUNTIME);
 static cfg::ParamPassword s_monitorpw(&s_spec, CN_MONITORPW, "Monitor password", "", NO_QUOTES, AT_RUNTIME);
 
@@ -240,6 +242,13 @@ bool ServerSpec::do_post_validate(Params params) const
     if (s_ssl.get(params) && s_ssl_cert.get(params).empty() != s_ssl_key.get(params).empty())
     {
         MXS_ERROR("Both '%s' and '%s' must be defined", s_ssl_cert.name().c_str(), s_ssl_key.name().c_str());
+        rval = false;
+    }
+
+    auto weight = s_weight.get(params);
+    if (weight < 0)
+    {
+        MXS_ERROR("'%s' must be a positive integer", s_weight.name().c_str());
         rval = false;
     }
 
@@ -475,6 +484,7 @@ Server::Settings::Settings(const std::string& name)
     , m_port(this, &s_port)
     , m_extra_port(this, &s_extra_port)
     , m_priority(this, &s_priority)
+    , m_weight(this, &s_weight)
     , m_monitoruser(this, &s_monitoruser)
     , m_monitorpw(this, &s_monitorpw)
     , m_persistpoolmax(this, &s_persistpoolmax)

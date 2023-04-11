@@ -183,6 +183,10 @@ public:
     int64_t  replication_lag() const override;
     uint64_t gtid_pos(uint32_t domain) const override;
     int64_t  ping() const override;
+    int64_t  weight() const override
+    {
+        return 0;
+    }
 
     uint64_t capabilities() const override
     {

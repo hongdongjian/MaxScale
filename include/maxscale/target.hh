@@ -230,6 +230,13 @@ public:
     virtual int64_t rank() const = 0;
 
     /**
+     * Get target weight
+     * 
+     * @return The weight of the target
+    */
+    virtual int64_t weight() const = 0;
+
+    /**
      * Returns the number of seconds that this target is behind in replication. If this target is a master or
      * replication lag is not applicable, returns -1.
      *
@@ -458,12 +465,24 @@ public:
      */
     void set_rlag_state(RLagState new_state, int max_rlag);
 
+    double get_server_weight() const
+    {
+        return server_weight;
+    }
+
+    void set_server_weight(double weight)
+    {
+        server_weight = weight;
+    }
+
 protected:
     Stats              m_stats;
     maxbase::EMAverage m_response_time {0.04, 0.35, 500};   /**< Response time calculations for this server */
     std::mutex         m_average_write_mutex;               /**< Protects response time modifications */
 
     std::atomic<RLagState> m_rlag_state {RLagState::NONE};
+
+    double server_weight {0};
 };
 
 class Error
